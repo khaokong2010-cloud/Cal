@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scientific Calculator</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root { --navy:#121826; --gray:#252F40; --blue:#3478F6; --orange:#FF9F43; --white:#FFFFFF; }
+  html, body { background: var(--navy); color: var(--white); min-height: 100%; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, 'Noto Sans Thai', sans-serif; }
+  .btn {
+    border-radius: 14px; font-weight: 600; color: var(--white);
+    height: 3.4rem; font-size: 1.15rem; cursor: pointer; user-select: none;
+    box-shadow: 0 4px 0 rgba(0,0,0,.40);
+    transition: transform .06s ease, box-shadow .06s ease, filter .15s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn:hover { filter: brightness(1.15); }
+  .btn:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0,0,0,.40); }
+  .btn-sm { height: 2.7rem; font-size: .92rem; }
+  .btn-gray { background: var(--gray); }
+  .btn-blue { background: var(--blue); }
+  .btn-orange { background: var(--orange); }
+  .btn-on { outline: 2px solid var(--orange); outline-offset: -2px; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { scrollbar-width: none; }
+  .hist-item:hover { background: rgba(255,255,255,.05); }
+  .shake { animation: shake .3s; }
+  @keyframes shake { 25%{transform:translateX(-5px)} 75%{transform:translateX(5px)} }
+</style>
+</head>
+<body class="flex items-start justify-center p-3 sm:p-6">
+
+<div class="w-full max-w-3xl flex flex-col md:flex-row gap-4 items-stretch md:items-start justify-center">
+
+  <!-- Calculator -->
+  <main class="w-full md:max-w-md rounded-3xl p-4 shadow-2xl" style="background:var(--navy); border:1px solid var(--gray);">
+    <div class="flex items-center justify-between mb-3 px-1">
+      <h1 class="text-sm font-semibold tracking-wide" style="color:rgba(255,255,255,.7)">SCIENTIFIC CALCULATOR</h1>
+      <button id="histToggle" class="text-xs px-3 py-1.5 rounded-lg" style="background:var(--gray)">ประวัติ</button>
+    </div>
+
+    <!-- Display -->
+    <div id="display" class="rounded-2xl px-4 py-3 mb-4 text-right" style="background:var(--gray);">
+      <div class="flex justify-between items-center text-xs mb-1" style="color:rgba(255,255,255,.5)">
+        <span id="modeLabel" class="font-semibold">DEG</span>
+      </div>
+      <div id="exprLine" class="no-scrollbar overflow-x-auto whitespace-nowrap text-lg h-8 leading-8" style="color:rgba(255,255,255,.55)"></div>
+      <div id="resultLine" class="no-scrollbar overflow-x-auto whitespace-nowrap font-semibold leading-tight" style="color:var(--white); font-size:3rem; min-height:3.6rem;">0</div>
+    </div>
+
+    <div id="sciGrid" class="grid grid-cols-5 gap-2 mb-3"></div>
+    <div id="mainGrid" class="grid grid-cols-4 gap-2.5"></div>
+  </main>
+
+  <!-- History -->
+  <aside id="histPanel" class="w-full md:w-64 rounded-3xl p-4 shadow-2xl hidden" style="background:var(--navy); border:1px solid var(--gray);">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-sm font-semibold" style="color:rgba(255,255,255,.7)">ประวัติการคำนวณ</h2>
+      <button id="histClear" class="text-xs px-2.5 py-1 rounded-lg" style="background:var(--gray)">ล้าง</button>
+    </div>
+    <div id="histList" class="flex flex-col gap-1 overflow-y-auto" style="max-height:28rem;"></div>
+    <p class="text-xs mt-3" style="color:rgba(255,255,255,.4)">กดที่สมการเพื่อนำสมการกลับมา หรือกดที่ผลลัพธ์เพื่อใช้ค่าต่อ</p>
+  </aside>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  /* ---------- State ---------- */
+  let expr = '';
+  let preview = '0';
+  let lastEq = '';
+  let justEvaluated = false;
+  let degMode = true;
+  let inv = false;
+  let history = [];
+  try { history = JSON.parse(localStorage.getItem('sci_calc_history') || '[]'); } catch (e) { history = []; }
+  if (!Array.isArray(history)) history = [];
+
+  const FN_RE = /^(asin|acos|atan|sin|cos|tan|log|ln|exp|pow10|√|∛)/;
+  const BACK_FN_RE = /(asin|acos|atan|sin|cos|tan|log|ln|exp|pow10|√|∛)\($/;
+  const isOp = c => c === '+' || c === '-' || c === '×' || c === '÷' || c === '^';
+
+  /* ---------- Evaluator (no eval) ---------- */
+  function tokenize(s) {
+    const out = []; let i = 0;
+    while (i < s.length) {
+      const rest = s.slice(i);
+      let m;
+      if (/\s/.test(rest[0])) { i++; continue; }
+      if ((m = rest.match(/^(\d+\.?\d*|\.\d+)(E[+-]?\d+)?/))) {
+        out.push({ t: 'num', v: parseFloat(m[0]) }); i += m[0].length; continue;
+      }
+      if ((m = rest.match(FN_RE))) { out.push({ t: 'fn', v: m[0] }); i += m[0].length; continue; }
+      if (rest[0] === 'π') { out.push({ t: 'num', v: Math.PI }); i++; continue; }
+      if (rest[0] === 'e') { out.push({ t: 'num', v: Math.E }); i++; continue; }
+      let c = rest[0];
+      if (c === '−') c = '-';
+      if (c === '*') c = '×';
+      if (c === '/') c = '÷';
+      if ('+-×÷^()!%'.includes(c)) { out.push({ t: 'op', v: c }); i++; continue; }
+      throw new Error('Syntax');
+    }
+    return out;
+  }
+
+  function fact(n) {
+    if (!Number.isInteger(n) || n < 0 || n > 170) throw new Error('Math');
+    let r = 1; for (let i = 2; i <= n; i++) r *= i; return r;
+  }
+
+  const clean = v => (Math.abs(v) < 1e-12 ? 0 : v);
+
+  function applyFn(name, x) {
+    const toR = a => (degMode ? a * Math.PI / 180 : a);
+    const fromR = a => (degMode ? a * 180 / Math.PI : a);
+    switch (name) {
+      case 'sin': return clean(Math.sin(toR(x)));
+      case 'cos': return clean(Math.cos(toR(x)));
+      case 'tan':
+        if (degMode && ((x % 180) + 180) % 180 === 90) throw new Error('Math');
+        return clean(Math.tan(toR(x)));
+      case 'asin': if (Math.abs(x) > 1) throw new Error('Math'); return fromR(Math.asin(x));
+      case 'acos': if (Math.abs(x) > 1) throw new Error('Math'); return fromR(Math.acos(x));
+      case 'atan': return fromR(Math.atan(x));
+      case 'log': if (x <= 0) throw new Error('Math'); return Math.log10(x);
+      case 'ln': if (x <= 0) throw new Error('Math'); return Math.log(x);
+      case 'exp': return Math.exp(x);
+      case 'pow10': return Math.pow(10, x);
+      case '√': if (x < 0) throw new Error('Math'); return Math.sqrt(x);
+      case '∛': return Math.cbrt(x);
+    }
+    throw new Error('Syntax');
+  }
+
+  function evaluate(src) {
+    let depth = 0;
+    for (const ch of src) { if (ch === '(') depth++; else if (ch === ')') { depth--; if (depth < 0) throw new Error('Syntax'); } }
+    src += ')'.repeat(depth);
+    const tokens = tokenize(src);
+    let p = 0;
+    const peek = () => tokens[p];
+    const isOpTok = (t, v) => t && t.t === 'op' && t.v === v;
+
+    function parseExpr() {
+      let v = parseTerm();
+      for (;;) {
+        const t = peek();
+        if (isOpTok(t, '+')) { p++; v += parseTerm(); }
+        else if (isOpTok(t, '-')) { p++; v -= parseTerm(); }
+        else break;
+      }
+      return v;
+    }
+    function parseTerm() {
+      let v = parseUnary();
+      for (;;) {
+        const t = peek();
+        if (isOpTok(t, '×')) { p++; v *= parseUnary(); }
+        else if (isOpTok(t, '÷')) { p++; const d = parseUnary(); if (d === 0) throw new Error('Math'); v /= d; }
+        else if (t && (t.t === 'num' || t.t === 'fn' || isOpTok(t, '('))) { v *= parseUnary(); } // implicit multiply
+        else break;
+      }
+      return v;
+    }
+    function parseUnary() {
+      const t = peek();
+      if (isOpTok(t, '-')) { p++; return -parseUnary(); }
+      if (isOpTok(t, '+')) { p++; return parseUnary(); }
+      return parsePower();
+    }
+    function parsePower() {
+      const base = parsePostfix();
+      if (isOpTok(peek(), '^')) { p++; const e = parseUnary(); return Math.pow(base, e); }
+      return base;
+    }
+    function parsePostfix() {
+      let v = parsePrimary();
+      for (;;) {
+        const t = peek();
+        if (isOpTok(t, '!')) { p++; v = fact(v); }
+        else if (isOpTok(t, '%')) { p++; v = v / 100; }
+        else break;
+      }
+      return v;
+    }
+    function parsePrimary() {
+      const t = tokens[p++];
+      if (!t) throw new Error('Syntax');
+      if (t.t === 'num') return t.v;
+      if (t.t === 'fn') {
+        if (!isOpTok(tokens[p], '(')) throw new Error('Syntax');
+        p++;
+        const v = parseExpr();
+        if (!isOpTok(tokens[p], ')')) throw new Error('Syntax');
+        p++;
+        return applyFn(t.v, v);
+      }
+      if (isOpTok(t, '(')) {
+        const v = parseExpr();
+        if (!isOpTok(tokens[p], ')')) throw new Error('Syntax');
+        p++;
+        return v;
+      }
+      throw new Error('Syntax');
+    }
+
+    const result = parseExpr();
+    if (p < tokens.length) throw new Error('Syntax');
+    if (!Number.isFinite(result)) throw new Error('Math');
+    return result;
+  }
+
+  function fmt(n) {
+    if (n === 0 || Object.is(n, -0)) return '0';
+    return String(parseFloat(n.toPrecision(12))).replace('e', 'E');
+  }
+
+  /* ---------- Input handling ---------- */
+  function press(text, kind) {
+    if (justEvaluated) {
+      if (['num', 'dot', 'val', 'fn', 'open'].includes(kind)) expr = '';
+      justEvaluated = false; lastEq = '';
+    }
+    const last = expr.slice(-1);
+    const hasOperand = /[\d)!%πe]$/.test(expr);
+
+    switch (kind) {
+      case 'num': expr += text; break;
+      case 'dot': {
+        if (!/\d$/.test(expr)) { expr += '0.'; break; }
+        const seg = (expr.match(/[\d.]*$/) || [''])[0];
+        if (!seg.includes('.')) expr += '.';
+        break;
+      }
+      case 'op': {
+        if (expr === '') { if (text === '-') expr = '-'; break; }
+        if (last === '(') { if (text === '-') expr += '-'; break; }
+        if (isOp(last)) {
+          if (text === '-' && (last === '×' || last === '÷' || last === '^')) expr += '-';
+          else if (expr.length >= 2 && isOp(expr.slice(-2, -1)) && last === '-') expr = expr.slice(0, -2) + text;
+          else expr = expr.slice(0, -1) + text;
+          if (expr === '+' || expr === '×' || expr === '÷' || expr === '^') expr = '';
+        } else expr += text;
+        break;
+      }
+      case 'post':
+        if (hasOperand) expr += text;
+        break;
+      case 'val': expr += text; break;
+      case 'fn': expr += text; break;
+      case 'open': expr += '('; break;
+      case 'close': {
+        const o = (expr.match(/\(/g) || []).length, c = (expr.match(/\)/g) || []).length;
+        if (o > c && (hasOperand)) expr += ')';
+        break;
+      }
+    }
+    update();
+  }
+
+  function backspace() {
+    if (justEvaluated) { justEvaluated = false; lastEq = ''; }
+    if (BACK_FN_RE.test(expr)) expr = expr.replace(BACK_FN_RE, '');
+    else expr = expr.slice(0, -1);
+    update();
+  }
+
+  function clearAll() {
+    expr = ''; preview = '0'; lastEq = ''; justEvaluated = false;
+    update();
+  }
+
+  function equals() {
+    if (!expr || justEvaluated) return;
+    try {
+      const r = fmt(evaluate(expr));
+      lastEq = expr;
+      addHistory(expr, r);
+      expr = r; preview = r; justEvaluated = true;
+      render();
+    } catch (e) {
+      const el = document.getElementById('resultLine');
+      el.textContent = 'Error';
+      el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake');
+      setTimeout(render, 900);
+    }
+  }
+
+  function update() {
+    if (expr === '') preview = '0';
+    else { try { preview = fmt(evaluate(expr)); } catch (e) { /* keep previous preview */ } }
+    render();
+  }
+
+  /* ---------- Rendering ---------- */
+  const $ = id => document.getElementById(id);
+  const show = s => s.replace(/-/g, '−');
+
+  function render() {
+    const exprLine = $('exprLine'), resLine = $('resultLine');
+    exprLine.textContent = justEvaluated ? show(lastEq) + ' =' : show(expr);
+    const r = justEvaluated ? expr : preview;
+    resLine.textContent = show(r);
+    const n = r.length;
+    resLine.style.fontSize = n <= 9 ? '3rem' : n <= 13 ? '2.3rem' : n <= 18 ? '1.7rem' : '1.3rem';
+    exprLine.scrollLeft = exprLine.scrollWidth;
+    $('modeLabel').textContent = degMode ? 'DEG' : 'RAD';
+    refreshButtons();
+  }
+
+  /* ---------- History ---------- */
+  function addHistory(e, r) {
+    if (history.length && history[0].e === e && history[0].r === r) return;
+    history.unshift({ e, r });
+    history = history.slice(0, 50);
+    saveHistory(); renderHistory();
+  }
+  function saveHistory() { try { localStorage.setItem('sci_calc_history', JSON.stringify(history)); } catch (e) {} }
+
+  function renderHistory() {
+    const list = $('histList');
+    list.textContent = '';
+    if (!history.length) {
+      const p = document.createElement('p');
+      p.className = 'text-sm py-4 text-center';
+      p.style.color = 'rgba(255,255,255,.4)';
+      p.textContent = 'ยังไม่มีประวัติ';
+      list.appendChild(p);
+      return;
+    }
+    history.forEach(h => {
+      const item = document.createElement('div');
+      item.className = 'hist-item rounded-lg px-3 py-2 text-right';
+      const a = document.createElement('div');
+      a.className = 'text-xs cursor-pointer break-all';
+      a.style.color = 'rgba(255,255,255,.55)';
+      a.textContent = show(h.e) + ' =';
+      a.title = 'นำสมการกลับมาแก้ไข';
+      a.addEventListener('click', () => { expr = h.e; justEvaluated = false; lastEq = ''; update(); });
+      const b = document.createElement('div');
+      b.className = 'text-lg font-semibold cursor-pointer break-all';
+      b.style.color = 'var(--orange)';
+      b.textContent = show(h.r);
+      b.title = 'ใช้ค่านี้ต่อ';
+      b.addEventListener('click', () => {
+        if (justEvaluated) { expr = ''; justEvaluated = false; lastEq = ''; }
+        const l = expr.slice(-1);
+        if (expr && !isOp(l) && l !== '(') expr += '×';
+        expr += h.r.startsWith('-') ? '(' + h.r + ')' : h.r;
+        update();
+      });
+      item.append(a, b);
+      list.appendChild(item);
+    });
+  }
+
+  /* ---------- Buttons ---------- */
+  const sciBtns = [
+    { id: 'inv', l: '2nd', a: 'inv', c: 'gray' },
+    { id: 'deg', l: 'DEG', a: 'deg', c: 'gray' },
+    { l: 'sin', al: 'sin⁻¹', i: 'sin(', ai: 'asin(', k: 'fn', c: 'gray' },
+    { l: 'cos', al: 'cos⁻¹', i: 'cos(', ai: 'acos(', k: 'fn', c: 'gray' },
+    { l: 'tan', al: 'tan⁻¹', i: 'tan(', ai: 'atan(', k: 'fn', c: 'gray' },
+    { l: 'ln', al: 'eˣ', i: 'ln(', ai: 'exp(', k: 'fn', c: 'gray' },
+    { l: 'log', al: '10ˣ', i: 'log(', ai: 'pow10(', k: 'fn', c: 'gray' },
+    { l: '√', i: '√(', k: 'fn', c: 'gray' },
+    { l: '∛', i: '∛(', k: 'fn', c: 'gray' },
+    { l: 'x²', i: '^2', k: 'post', c: 'gray' },
+    { l: 'xʸ', i: '^', k: 'op', c: 'gray' },
+    { l: 'π', i: 'π', k: 'val', c: 'gray' },
+    { l: 'e', i: 'e', k: 'val', c: 'gray' },
+    { l: 'n!', i: '!', k: 'post', c: 'gray' },
+    { l: '%', i: '%', k: 'post', c: 'gray' },
+  ];
+  const mainBtns = [
+    { l: 'AC', a: 'ac', c: 'gray' }, { l: '(', i: '(', k: 'open', c: 'gray' },
+    { l: ')', i: ')', k: 'close', c: 'gray' }, { l: '÷', i: '÷', k: 'op', c: 'orange' },
+    { l: '7', i: '7', k: 'num', c: 'blue' }, { l: '8', i: '8', k: 'num', c: 'blue' },
+    { l: '9', i: '9', k: 'num', c: 'blue' }, { l: '×', i: '×', k: 'op', c: 'orange' },
+    { l: '4', i: '4', k: 'num', c: 'blue' }, { l: '5', i: '5', k: 'num', c: 'blue' },
+    { l: '6', i: '6', k: 'num', c: 'blue' }, { l: '−', i: '-', k: 'op', c: 'orange' },
+    { l: '1', i: '1', k: 'num', c: 'blue' }, { l: '2', i: '2', k: 'num', c: 'blue' },
+    { l: '3', i: '3', k: 'num', c: 'blue' }, { l: '+', i: '+', k: 'op', c: 'orange' },
+    { l: '⌫', a: 'back', c: 'gray' }, { l: '0', i: '0', k: 'num', c: 'blue' },
+    { l: '.', i: '.', k: 'dot', c: 'blue' }, { l: '=', a: 'eq', c: 'orange' },
+  ];
+
+  const dynamic = []; // buttons whose label changes
+  function buildButtons(list, container, small) {
+    list.forEach(b => {
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.className = 'btn btn-' + b.c + (small ? ' btn-sm' : '');
+      el.textContent = b.l;
+      el.addEventListener('click', () => {
+        el.blur();
+        if (b.a === 'inv') { inv = !inv; render(); }
+        else if (b.a === 'deg') { degMode = !degMode; update(); }
+        else if (b.a === 'ac') clearAll();
+        else if (b.a === 'back') backspace();
+        else if (b.a === 'eq') equals();
+        else press(inv && b.ai ? b.ai : b.i, b.k);
+      });
+      b.el = el;
+      container.appendChild(el);
+    });
+  }
+  function refreshButtons() {
+    sciBtns.forEach(b => {
+      if (b.a === 'inv') b.el.classList.toggle('btn-on', inv);
+      else if (b.a === 'deg') b.el.textContent = degMode ? 'DEG' : 'RAD';
+      else if (b.al) b.el.textContent = inv ? b.al : b.l;
+    });
+  }
+
+  buildButtons(sciBtns, $('sciGrid'), true);
+  buildButtons(mainBtns, $('mainGrid'), false);
+
+  /* ---------- History panel toggle ---------- */
+  const panel = $('histPanel');
+  if (window.innerWidth >= 768) panel.classList.remove('hidden');
+  $('histToggle').addEventListener('click', () => panel.classList.toggle('hidden'));
+  $('histClear').addEventListener('click', () => { history = []; saveHistory(); renderHistory(); });
+
+  /* ---------- Keyboard ---------- */
+  document.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key;
+    let handled = true;
+    if (/^\d$/.test(k)) press(k, 'num');
+    else if (k === '.' || k === ',') press('.', 'dot');
+    else if (k === '+' || k === '-') press(k, 'op');
+    else if (k === '*' || k === 'x' || k === 'X') press('×', 'op');
+    else if (k === '/') press('÷', 'op');
+    else if (k === '^') press('^', 'op');
+    else if (k === '(') press('(', 'open');
+    else if (k === ')') press(')', 'close');
+    else if (k === '!' || k === '%') press(k, 'post');
+    else if (k === 'Enter' || k === '=') equals();
+    else if (k === 'Backspace') backspace();
+    else if (k === 'Escape' || k === 'Delete') clearAll();
+    else if (k === 'p') press('π', 'val');
+    else if (k === 'e') press('e', 'val');
+    else if (k === 's') press(inv ? 'asin(' : 'sin(', 'fn');
+    else if (k === 'c') press(inv ? 'acos(' : 'cos(', 'fn');
+    else if (k === 't') press(inv ? 'atan(' : 'tan(', 'fn');
+    else if (k === 'l') press('log(', 'fn');
+    else if (k === 'n') press('ln(', 'fn');
+    else if (k === 'r') press('√(', 'fn');
+    else handled = false;
+    if (handled) e.preventDefault();
+  });
+
+  renderHistory();
+  render();
+})();
+</script>
+</body>
+</html>
